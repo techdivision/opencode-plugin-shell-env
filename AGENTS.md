@@ -183,6 +183,59 @@ metadata:
 
 The `description` field contains trigger phrases that OpenCode uses for skill matching.
 
+## Git Flow Branching
+
+This repository uses **Git Flow** branching:
+
+| Branch | Purpose |
+|--------|---------|
+| `main` | Production releases only — tagged with `v*` |
+| `develop` | Active development (default branch) |
+| `feature/*` | Feature branches (from `develop`, merge back to `develop`) |
+
+### Rules
+
+- **`develop`** is the default branch. All work starts here.
+- **`main`** receives merges only from `develop` at release time.
+- **Never commit directly to `main`** — always merge from `develop`.
+- **Tags** are created on `main` after merging from `develop`.
+- **Feature branches** branch from `develop` and merge back via PR.
+
+### Release Workflow
+
+```bash
+# 1. On develop: bump version in package.json + plugin.json, update CHANGELOG.md
+git checkout develop
+# ... edit package.json, plugin.json, CHANGELOG.md ...
+git add -A
+git commit -m "Prepare release v1.2.0"
+
+# 2. Merge develop into main
+git checkout main
+git merge develop
+
+# 3. Tag the release on main
+git tag v1.2.0
+
+# 4. Push everything
+git push origin main --tags
+
+# 5. Switch back to develop
+git checkout develop
+
+# 6. GitHub Actions triggers on tag push → npm publish
+```
+
+### Branch Diagram
+
+```
+main    ──●──────────────────●──────── (tagged releases)
+           \                /
+develop ────●──●──●──●──●──●──●────── (active development)
+                \      /
+                 feat/x              (feature branches)
+```
+
 ## Version Management
 
 - Version tracked in both `package.json` and `plugin.json` — keep them in sync.

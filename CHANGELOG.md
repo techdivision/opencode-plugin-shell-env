@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1
+
+- Fix skills directory structure for plugin linker compatibility
+  - The linker expects `skills/<group>/<skill-name>/` but the skill was at `skills/<skill-name>/` directly
+  - The skill was silently never linked because the linker treated the skill directory as a group directory
+
 ## 1.1.0
 
 - Inject `.env` variables into `process.env` at plugin init time (Phase 1)

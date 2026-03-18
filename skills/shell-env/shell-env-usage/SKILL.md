@@ -14,10 +14,19 @@ metadata:
 
 ## Overview
 
-The `shell-env` plugin loads environment variables from `.opencode/.env` and makes them available in two ways:
+The `shell-env` plugin loads environment variables from `.env` files and makes them available in two ways:
 
 1. **`process.env`** (at plugin init) — for all plugins loaded after `shell-env`
 2. **`shell.env` hook** (on every shell invocation) — for shell commands and MCP server processes
+
+The plugin reads `.env` files from **two locations** and merges them with a "last wins" strategy:
+
+| Priority | Source | Purpose |
+|----------|--------|---------|
+| 1 (base) | `~/.config/opencode/.env` | Global defaults (user email, shared API keys) |
+| 2 (wins) | `<projectDir>/.opencode/.env` | Project-specific overrides |
+
+Both layers **override** existing OS environment variables. If a key appears in both files, the project-level value wins. This matches the "last wins" convention used by the opencode-cli plugin discovery (local overrides user).
 
 This eliminates the need for each plugin to implement its own `.env` file parsing.
 
@@ -33,35 +42,49 @@ This eliminates the need for each plugin to implement its own `.env` file parsin
 
 ### Phase 1: Plugin Initialization (`process.env`)
 
-When OpenCode loads the `shell-env` plugin, it reads `.opencode/.env` and injects all variables into `process.env` **before** subsequent plugins are initialized.
+When OpenCode loads the `shell-env` plugin, it reads `.env` files from both locations, merges them (last wins), and injects all variables into `process.env` **before** subsequent plugins are initialized.
 
 ```
 Plugin loading order (.opencode/package.json dependencies):
-  1. shell-env        ← reads .env, sets process.env
+  1. shell-env        ← reads global + project .env, sets process.env
   2. time-tracking    ← can read process.env.OPENCODE_USER_EMAIL
   3. other-plugin     ← can read process.env.MY_SECRET
 ```
 
 **Rules:**
-- Existing `process.env` values are **never overwritten** (OS-level exports take precedence)
-- If `.opencode/.env` is missing or unreadable, the plugin silently continues
+- `.env` values **override** existing OS environment variables (last wins)
+- Project `.env` overrides global `.env` for the same key
+- If either `.env` file is missing or unreadable, the plugin silently continues
 - Variables are available immediately after plugin init — no async delay
 
 ### Phase 2: Shell Execution (`shell.env` hook)
 
-On every shell command or MCP server process, the plugin re-reads `.opencode/.env` and injects variables into the shell environment.
+On every shell command or MCP server process, the plugin re-reads both `.env` files and injects merged variables into the shell environment.
 
 ```
 Shell command execution:
   1. OpenCode calls "shell.env" hook
-  2. shell-env injects .env variables into output.env
-  3. Shell command runs with merged environment
+  2. shell-env reads global + project .env, merges (last wins)
+  3. Merged variables injected into output.env
+  4. Shell command runs with merged environment
 ```
 
 **Rules:**
 - Re-reads `.env` on every invocation (picks up changes without restart)
-- Existing shell environment variables are **never overwritten**
+- `.env` values **override** existing shell environment variables
 - MCP servers configured in `opencode.json` see the variables via `{env:KEY}`
+
+### Global vs. Project `.env`
+
+```
+~/.config/opencode/.env          ← shared across all projects
+  OPENCODE_USER_EMAIL=user@example.com
+  TEMPO_API_TOKEN=tempo_xyz789
+
+<projectDir>/.opencode/.env      ← project-specific, overrides global
+  N8N_MCP_BEARER_TOKEN=n8n_api_abc123
+  OPENCODE_USER_EMAIL=other@example.com   ← wins over global
+```
 
 ## Configuration
 
@@ -225,7 +248,7 @@ Without `shell-env`, `{env:N8N_MCP_BEARER_TOKEN}` only resolves if the variable 
 |---------|-------|----------|
 | `process.env.KEY` is `undefined` | shell-env loaded after the plugin | Move shell-env to first position in `.opencode/package.json` dependencies |
 | `process.env.KEY` is `undefined` | `.opencode/.env` file missing | Create `.opencode/.env` with the variable |
-| `process.env.KEY` has wrong value | OS-level export overrides `.env` | Remove the OS-level export or update it |
+| `process.env.KEY` has wrong value | Project `.env` overrides global `.env` and OS exports | Check both `~/.config/opencode/.env` and `.opencode/.env` |
 | MCP server doesn't see variable | shell-env not installed | Install and link the plugin |
 
 ### Variable not available in MCP server

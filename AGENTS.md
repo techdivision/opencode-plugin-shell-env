@@ -111,7 +111,7 @@ import path from "path"
   This is intentional — the plugin must never crash or block OpenCode startup.
 - Use empty `catch {}` blocks (no error variable needed).
 - Return empty objects/records on failure, not `null` or `undefined`.
-- Never overwrite existing environment variables (`if (!(key in target))`).
+- Last Wins: `.env` values intentionally override existing environment variables.
 
 ```typescript
 // Correct pattern for this plugin
@@ -127,27 +127,25 @@ try {
 
 The plugin has two phases, both in a single file:
 
-1. **Init phase** (runs once at plugin load): Reads `.env` → sets `process.env`
-2. **Hook phase** (runs on every shell invocation): Reads `.env` → sets `output.env`
+1. **Init phase** (runs once at plugin load): Reads global + project `.env` → merges (last wins) → sets `process.env`
+2. **Hook phase** (runs on every shell invocation): Reads global + project `.env` → merges → sets `output.env`
 
 ```typescript
 export const ShellEnvPlugin: Plugin = async (input) => {
-  // Phase 1: Init-time injection into process.env
-  const parsed = loadEnvFile(input.directory)
-  for (const [key, value] of Object.entries(parsed)) {
-    if (!(key in process.env)) {
-      process.env[key] = value
-    }
+  const projectDir = input.directory
+
+  // Phase 1: Merge global + project .env, inject into process.env (last wins)
+  const merged = loadMergedEnv(projectDir)
+  for (const [key, value] of Object.entries(merged)) {
+    process.env[key] = value
   }
 
   return {
-    // Phase 2: Shell-time injection via hook
+    // Phase 2: Shell-time injection via hook (re-reads .env on every invocation)
     "shell.env": async (_input, output) => {
-      const envVars = loadEnvFile(input.directory)
+      const envVars = loadMergedEnv(projectDir)
       for (const [key, value] of Object.entries(envVars)) {
-        if (!(key in output.env)) {
-          output.env[key] = value
-        }
+        output.env[key] = value
       }
     },
   }
@@ -156,12 +154,14 @@ export const ShellEnvPlugin: Plugin = async (input) => {
 
 ### Key Design Rules
 
-1. **Never overwrite** existing env vars — OS-level exports always take precedence.
-2. **Never throw** — all errors are silently caught and ignored.
-3. **No external dependencies** beyond `@opencode-ai/plugin` and Node.js built-ins.
-4. **Re-read `.env` on every shell invocation** — picks up changes without restart.
-5. **Read `.env` once at init** — populates `process.env` for downstream plugins.
-6. **Source lives in `src/`**, not `plugins/` — avoids conflicts with the opencode-link symlinker.
+1. **Last Wins** — `.env` values override OS environment variables. Project `.env` overrides global `.env`.
+2. **Two locations** — reads `~/.config/opencode/.env` (global) and `<projectDir>/.opencode/.env` (project).
+3. **Never throw** — all errors are silently caught and ignored.
+4. **No external dependencies** beyond `@opencode-ai/plugin` and Node.js built-ins.
+5. **Re-read `.env` on every shell invocation** — picks up changes without restart.
+6. **Read `.env` once at init** — populates `process.env` for downstream plugins.
+7. **Source lives in `src/`**, not `plugins/` — avoids conflicts with the opencode-link symlinker.
+8. **Global config path** — uses `os.homedir() + "/.config/opencode"`, consistent with opencode-cli.
 
 ### Skill Documents
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0
+
+- **BREAKING:** Switch from "never overwrite" to "last wins" merge strategy
+  - `.env` values now override existing OS environment variables
+  - This matches the opencode-cli convention (local overrides user)
+- Add multi-location `.env` loading with cascading merge:
+  1. `~/.config/opencode/.env` — global defaults (user email, shared API keys)
+  2. `<projectDir>/.opencode/.env` — project-specific overrides (wins)
+- Refactor `loadEnvFile()` → `loadEnvFromPath()` + `loadMergedEnv()` + `getGlobalConfigDir()`
+- Update AGENTS.md, README.md, and skill document with new behavior
+
 ## 1.1.1
 
 - Fix skills directory structure for plugin linker compatibility

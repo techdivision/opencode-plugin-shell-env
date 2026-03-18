@@ -1,20 +1,31 @@
 # opencode-plugin-shell-env
 
-Loads `.opencode/.env` variables into OpenCode's shell environment and MCP server processes.
+Loads `.env` variables into OpenCode's shell environment, MCP server processes, and `process.env` for downstream plugins.
 
 ## Problem
 
-OpenCode's `opencode.json` supports environment variable references like `{env:N8N_MCP_BEARER_TOKEN}`, but these only resolve **OS-level environment variables** (i.e., variables exported in the shell). An `.opencode/.env` file is **not** read by default.
+OpenCode's `opencode.json` supports environment variable references like `{env:N8N_MCP_BEARER_TOKEN}`, but these only resolve **OS-level environment variables** (i.e., variables exported in the shell). An `.env` file is **not** read by default.
 
 ## Solution
 
-This plugin hooks into OpenCode's `shell.env` lifecycle event and injects variables from `<projectRoot>/.opencode/.env` into every shell command and MCP server process spawned by OpenCode.
+This plugin hooks into OpenCode's `shell.env` lifecycle event and injects variables from `.env` files into every shell command, MCP server process, and `process.env` for downstream plugins.
+
+### .env Loading Order (Last Wins)
+
+The plugin reads `.env` files from two locations and merges them — more specific sources override less specific ones:
+
+| Priority | Source | Purpose |
+|----------|--------|---------|
+| 1 (base) | `~/.config/opencode/.env` | Global defaults (user email, shared API keys) |
+| 2 (wins) | `<projectDir>/.opencode/.env` | Project-specific overrides |
+
+Both layers **override** existing OS environment variables. If a key appears in both files, the project-level value wins.
 
 ### Behavior
 
-- Reads `<projectRoot>/.opencode/.env` on every shell invocation
-- **Does NOT overwrite** variables already present in the environment
-- Silently skips if `.opencode/.env` is missing or unreadable
+- Reads both `.env` files at init and on every shell invocation
+- **Last Wins:** project `.env` > global `.env` > OS environment
+- Silently skips missing or unreadable `.env` files
 - Parses standard `.env` syntax
 
 ### Supported `.env` Syntax

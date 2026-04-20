@@ -1,6 +1,6 @@
 {
   "name": "@techdivision/opencode-plugin-shell-env",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "OpenCode Plugin - Shell environment loader for .env variables",
   "type": "module",
   "main": "src/shell-env.ts",

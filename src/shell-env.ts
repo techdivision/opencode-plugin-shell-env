@@ -1,4 +1,4 @@
-import type { Plugin } from "@opencode-ai/plugin"
+import type { Plugin, Hooks, PluginInput } from "@opencode-ai/plugin"
 import fs from "fs"
 import os from "os"
 import path from "path"
@@ -22,13 +22,13 @@ import path from "path"
  *
  * ## .env Loading Order (Last Wins)
  *
- * The plugin reads `.env` files from two locations and merges them with a
- * "last wins" strategy — more specific sources override less specific ones:
- *
- * | Priority | Source                          | Purpose                              |
- * |----------|---------------------------------|--------------------------------------|
- * | 1 (base) | `~/.config/opencode/.env`       | Global defaults (user email, shared keys) |
- * | 2 (wins) | `<projectDir>/.opencode/.env`   | Project-specific overrides           |
+  * The plugin reads `.env` files from two locations and merges them with a
+  * "last wins" strategy — more specific sources override less specific ones:
+  *
+  * | Priority | Source                          | Purpose                              |
+  * |----------|---------------------------------|--------------------------------------|
+  * | 1 (base) | `~/.config/opencode/.env`       | Global defaults (user email, shared keys) |
+  * | 2 (wins) | `<projectDir>/.env`             | Project-specific overrides (.opencode/.env) |
  *
  * Both layers override existing OS environment variables. If a key appears in
  * both files, the project-level value wins. This matches the "last wins"
@@ -150,15 +150,16 @@ function getGlobalConfigDir(): string {
  * Merges .env variables from global and project locations using "last wins".
  *
  * Loading order (later entries override earlier ones):
- *   1. ~/.config/opencode/.env         (global defaults)
- *   2. <projectDir>/.opencode/.env     (project overrides)
+ *   1. ~/.config/opencode/.env    (global defaults)
+ *   2. <projectDir>/.env          (project overrides)
  *
- * @param projectDir - The project working directory (input.directory)
+ * @param projectDir - The .opencode directory path (input.directory)
  * @returns Merged key-value record with project values winning over global
  */
 function loadMergedEnv(projectDir: string): Record<string, string> {
   const globalEnvPath = path.join(getGlobalConfigDir(), ".env")
-  const projectEnvPath = path.join(projectDir, ".opencode", ".env")
+  // projectDir is already the .opencode directory, so .env is directly there
+  const projectEnvPath = path.join(projectDir, ".env")
 
   const globalEnv = loadEnvFromPath(globalEnvPath)
   const projectEnv = loadEnvFromPath(projectEnvPath)
@@ -167,8 +168,21 @@ function loadMergedEnv(projectDir: string): Record<string, string> {
   return { ...globalEnv, ...projectEnv }
 }
 
-export const ShellEnvPlugin: Plugin = async (input) => {
-  const projectDir = input.directory
+export const plugin: Plugin = async ({ client, directory }: PluginInput): Promise<Hooks> => {
+  // OpenCode passes the project root, but we need the .opencode directory
+  const projectDir = path.join(directory, ".opencode")
+
+  /**
+   * Helper function to inject merged .env variables into process.env.
+   * Called during plugin initialization to ensure downstream plugins
+   * can read environment variables via process.env.
+   */
+  const injectIntoProcessEnv = () => {
+    const merged = loadMergedEnv(projectDir)
+    for (const [key, value] of Object.entries(merged)) {
+      process.env[key] = value
+    }
+  }
 
   // Phase 1: Inject merged .env variables into process.env at plugin init time.
   // This makes them available to all plugins loaded AFTER this one via
@@ -177,10 +191,13 @@ export const ShellEnvPlugin: Plugin = async (input) => {
   // Last Wins: .env values OVERRIDE existing OS environment variables.
   // This is intentional — explicit .env configuration takes precedence
   // over inherited shell environment, matching the opencode-cli convention.
-  const merged = loadMergedEnv(projectDir)
-  for (const [key, value] of Object.entries(merged)) {
-    process.env[key] = value
-  }
+  //
+  // NOTE: During local plugin development with symlinks in .opencode/plugins/,
+  // plugins are loaded sequentially in filesystem order. In production with
+  // npm package declarations in opencode.json, plugins may load in parallel.
+  // To ensure reliable environment variable propagation, downstream plugins
+  // should read process.env as a fallback (see time-tracking ConfigLoader).
+  injectIntoProcessEnv()
 
   return {
     // Phase 2: Inject merged .env variables into shell execution environment.

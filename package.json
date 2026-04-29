@@ -1,21 +1,21 @@
 {
   "name": "@techdivision/opencode-plugin-shell-env",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "OpenCode Plugin - Shell environment loader for .env variables",
   "type": "module",
   "main": "src/shell-env.ts",
   "types": "src/shell-env.ts",
   "files": [
     "src/",
+    "plugins/",
     "skills/",
     "plugin.json"
   ],
   "keywords": ["opencode", "plugin", "shell", "env", "dotenv"],
   "dependencies": {
-    "@opencode-ai/plugin": "1.2.5"
+    "@opencode-ai/plugin": "^1.14"
   },
   "devDependencies": {
-    "@types/bun": "latest",
     "@types/node": "^25.0.3",
     "typescript": "^5.9.3"
   },
@@ -24,7 +24,7 @@
   },
   "opencode": {
     "plugin": true,
-    "category": "optional"
+    "category": "standard"
   },
   "repository": {
     "type": "git",

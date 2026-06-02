@@ -167,6 +167,242 @@ function loadMergedEnv(projectDir: string): Record<string, string> {
   return { ...globalEnv, ...projectEnv }
 }
 
+/**
+ * Reads the "plugin" array from an opencode.json file.
+ *
+ * Returns an empty array if the file is missing, unreadable, not valid JSON,
+ * or does not contain a "plugin" array.
+ */
+function readJsonPluginArray(jsonPath: string): string[] {
+  if (!fs.existsSync(jsonPath)) {
+    return []
+  }
+
+  try {
+    const content = fs.readFileSync(jsonPath, "utf-8")
+    const parsed = JSON.parse(content)
+    if (!Array.isArray(parsed.plugin)) {
+      return []
+    }
+    return parsed.plugin.filter((entry: unknown) => typeof entry === "string")
+  } catch {
+    // Silently ignore read/parse errors
+    return []
+  }
+}
+
+/**
+ * Merges the "plugin" arrays from the global and project opencode.json files.
+ *
+ * Reads:
+ *   1. ~/.config/opencode/opencode.json   (global)
+ *   2. <projectDir>/.opencode/opencode.json (project)
+ *
+ * The two arrays are concatenated and deduplicated (order preserved, first wins).
+ *
+ * @param projectDir - The project working directory (input.directory)
+ * @returns Deduplicated list of plugin package names
+ */
+function getMergedPluginList(projectDir: string): string[] {
+  const globalConfigPath = path.join(getGlobalConfigDir(), "opencode.json")
+  const projectConfigPath = path.join(projectDir, ".opencode", "opencode.json")
+
+  const merged = [
+    ...readJsonPluginArray(globalConfigPath),
+    ...readJsonPluginArray(projectConfigPath),
+  ]
+
+  return [...new Set(merged)]
+}
+
+/**
+ * Resolves a plugin package name to its installed package directory in the
+ * OpenCode package cache.
+ *
+ * Cache layout: ~/.cache/opencode/packages/<name>@<version>/node_modules/<name>
+ *
+ * The plugin name in opencode.json has no version suffix, while the cache
+ * directory does (e.g. "opencode-plugin-magento@latest"). This function matches
+ * the cache directory by prefix (<name>@*) and returns the inner package path.
+ *
+ * @param pluginName - Plugin package name (e.g. "@techdivision/opencode-plugin-magento")
+ * @returns Absolute path to the installed package, or null if not found
+ */
+function resolvePackageCacheDir(pluginName: string): string | null {
+  const packagesDir = path.join(os.homedir(), ".cache", "opencode", "packages")
+
+  // Split scoped names: "@scope/name" -> ["@scope", "name"]
+  const lastSlash = pluginName.lastIndexOf("/")
+  const scope = lastSlash === -1 ? "" : pluginName.slice(0, lastSlash)
+  const bareName = lastSlash === -1 ? pluginName : pluginName.slice(lastSlash + 1)
+
+  const searchDir = scope ? path.join(packagesDir, scope) : packagesDir
+
+  try {
+    const entries = fs.readdirSync(searchDir)
+    const match = entries.find((entry) => entry.startsWith(bareName + "@"))
+    if (!match) {
+      return null
+    }
+
+    const packagePath = path.join(
+      searchDir,
+      match,
+      "node_modules",
+      pluginName,
+    )
+    if (!fs.existsSync(packagePath)) {
+      return null
+    }
+    return packagePath
+  } catch {
+    // Silently ignore read errors
+    return null
+  }
+}
+
+/**
+ * Recursively finds all directories that directly contain a SKILL.md file.
+ *
+ * Skill folders are nested at varying depths within a package's skills/ dir,
+ * so each directory holding a SKILL.md is treated as one skill unit.
+ *
+ * @param skillsRoot - Directory to search (e.g. <package>/skills)
+ * @returns List of absolute paths to skill leaf directories
+ */
+function findSkillLeafDirs(skillsRoot: string): string[] {
+  const results: string[] = []
+
+  try {
+    const entries = fs.readdirSync(skillsRoot, { withFileTypes: true })
+
+    const hasSkillMd = entries.some(
+      (entry) => entry.isFile() && entry.name === "SKILL.md",
+    )
+    if (hasSkillMd) {
+      results.push(skillsRoot)
+      return results
+    }
+
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        results.push(...findSkillLeafDirs(path.join(skillsRoot, entry.name)))
+      }
+    }
+  } catch {
+    // Silently ignore unreadable directories
+  }
+
+  return results
+}
+
+/**
+ * Removes all existing symlinks in the given directory.
+ *
+ * Only symbolic links are removed — real files and directories are left
+ * untouched to avoid data loss. Runs before fresh symlinks are created so the
+ * skills directory always reflects the currently installed plugins.
+ *
+ * @param targetDir - Directory whose symlinks should be cleared
+ */
+function clearSkillSymlinks(targetDir: string): void {
+  if (!fs.existsSync(targetDir)) {
+    return
+  }
+
+  try {
+    for (const entry of fs.readdirSync(targetDir)) {
+      const entryPath = path.join(targetDir, entry)
+      try {
+        if (fs.lstatSync(entryPath).isSymbolicLink()) {
+          fs.unlinkSync(entryPath)
+        }
+      } catch {
+        // Silently ignore individual entry errors
+      }
+    }
+  } catch {
+    // Silently ignore directory read errors
+  }
+}
+
+/**
+ * Creates a symlink for a single skill leaf directory.
+ *
+ * The link name is prefixed with the plugin's short name to guarantee
+ * uniqueness across plugins (e.g. "opencode-plugin-magento-magento-eav-attributes").
+ *
+ * @param skillDir - Absolute path to the skill leaf directory (the link target)
+ * @param targetDir - Directory where the symlink is created (.opencode/skills)
+ * @param pluginShortName - Basename of the plugin, used as link name prefix
+ */
+function createSkillSymlink(
+  skillDir: string,
+  targetDir: string,
+  pluginShortName: string,
+): void {
+  try {
+    const linkName = pluginShortName + "-" + path.basename(skillDir)
+    const linkPath = path.join(targetDir, linkName)
+    fs.symlinkSync(skillDir, linkPath, "dir")
+  } catch {
+    // Silently ignore symlink creation errors (e.g. already exists)
+  }
+}
+
+/**
+ * Links the skills of all configured plugins into .opencode/skills.
+ *
+ * Workflow:
+ *   1. Only run if a ".opencode" directory exists in the project.
+ *   2. Clear all existing symlinks in .opencode/skills.
+ *   3. Merge the "plugin" arrays from global + project opencode.json.
+ *   4. For each plugin, resolve its installed package in the cache and find
+ *      every skill leaf directory (a folder containing SKILL.md).
+ *   5. Create a prefixed symlink for each skill into .opencode/skills.
+ *
+ * Never throws — all errors are silently ignored.
+ *
+ * @param projectDir - The project working directory (input.directory)
+ */
+function linkPluginSkills(projectDir: string): void {
+  const opencodeDir = path.join(projectDir, ".opencode")
+  if (!fs.existsSync(opencodeDir)) {
+    return
+  }
+
+  const skillsTargetDir = path.join(opencodeDir, "skills")
+  clearSkillSymlinks(skillsTargetDir)
+
+  const pluginNames = getMergedPluginList(projectDir)
+  if (pluginNames.length === 0) {
+    return
+  }
+
+  try {
+    fs.mkdirSync(skillsTargetDir, { recursive: true })
+  } catch {
+    return
+  }
+
+  for (const pluginName of pluginNames) {
+    const packageDir = resolvePackageCacheDir(pluginName)
+    if (!packageDir) {
+      continue
+    }
+
+    const skillsRoot = path.join(packageDir, "skills")
+    if (!fs.existsSync(skillsRoot)) {
+      continue
+    }
+
+    const pluginShortName = path.basename(pluginName)
+    for (const skillDir of findSkillLeafDirs(skillsRoot)) {
+      createSkillSymlink(skillDir, skillsTargetDir, pluginShortName)
+    }
+  }
+}
+
 export const ShellEnvPlugin: Plugin = async (input) => {
   const projectDir = input.directory
 
@@ -180,6 +416,14 @@ export const ShellEnvPlugin: Plugin = async (input) => {
   const merged = loadMergedEnv(projectDir)
   for (const [key, value] of Object.entries(merged)) {
     process.env[key] = value
+  }
+
+  // Link plugin skills into .opencode/skills (clears stale symlinks first).
+  // Guarded so a failure here can never block OpenCode startup.
+  try {
+    linkPluginSkills(projectDir)
+  } catch {
+    // Silently ignore — skill linking is best-effort
   }
 
   return {

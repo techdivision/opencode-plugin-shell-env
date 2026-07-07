@@ -11,10 +11,11 @@
     "plugin.json"
   ],
   "keywords": ["opencode", "plugin", "shell", "env", "dotenv"],
-  "dependencies": {
-    "@opencode-ai/plugin": "1.2.5"
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.0.0"
   },
   "devDependencies": {
+    "@opencode-ai/plugin": "^1.17.0",
     "@types/bun": "latest",
     "@types/node": "^25.0.3",
     "typescript": "^5.9.3"

@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.2
+
+- **fix:** Remove `bun` from `peerDependencies` — the Bun runtime is provided by OpenCode itself and does not need to be declared as a peer dependency. Declaring it caused Bun to install the full `bun` npm package (~346 MB including all platform binaries) on every cache-miss, significantly slowing down OpenCode startup time.
+- **fix:** Move `@opencode-ai/plugin` from `dependencies` to `peerDependencies` + `devDependencies` — the package is only used for TypeScript type-checking (`import type`). Declaring it as a regular dependency caused its heavy transitive dependencies (`effect`, `zod`, etc.) to be installed unnecessarily at runtime.
+
+## 1.2.1
+
+- Internal dependency update.
+
 ## 1.2.0
 
 - **BREAKING:** Switch from "never overwrite" to "last wins" merge strategy
